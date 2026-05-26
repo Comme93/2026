@@ -1,0 +1,504 @@
+using WarehouseManagement.Repositories;
+using WarehouseManagement.Models;
+
+namespace WarehouseManagement.Forms;
+
+public partial class MainForm : Form
+{
+    private readonly ProductRepository _productRepo = new();
+    private readonly CategoryRepository _categoryRepo = new();
+    private readonly SupplierRepository _supplierRepo = new();
+    private readonly IncomeTransactionRepository _incomeRepo = new();
+    private readonly OutcomeTransactionRepository _outcomeRepo = new();
+    private readonly UserActionLogRepository _logRepo = new();
+    private Panel? _currentPanel;
+    private float _opacity = 0;
+    private System.Windows.Forms.Timer? _fadeInTimer;
+    private bool _isDragging = false;
+    private Point _dragStartPoint;
+
+    public MainForm()
+    {
+        InitializeComponent();
+        SetupUI();
+        StartFadeInAnimation();
+    }
+
+    private void InitializeComponent()
+    {
+        this.SuspendLayout();
+        this.AutoScaleDimensions = new SizeF(7F, 15F);
+        this.AutoScaleMode = AutoScaleMode.Font;
+        this.ResumeLayout(false);
+    }
+
+    private void SetupUI()
+    {
+        this.Text = "Warehouse Management System";
+        this.Size = new Size(1400, 900);
+        this.StartPosition = FormStartPosition.CenterScreen;
+        this.BackColor = Color.FromArgb(15, 23, 42);
+        this.Opacity = 0;
+        this.FormBorderStyle = FormBorderStyle.None;
+        this.DoubleBuffered = true;
+
+        var mainPanel = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(15, 23, 42) };
+
+        var titleBar = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 40,
+            BackColor = Color.FromArgb(30, 41, 59),
+            BorderStyle = BorderStyle.FixedSingle
+        };
+
+        var titleLabel = new Label
+        {
+            Text = "📦 Warehouse Management",
+            Font = new Font("Segoe UI", 12, FontStyle.Bold),
+            ForeColor = Color.FromArgb(59, 130, 246),
+            AutoSize = false,
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Padding = new Padding(10, 0, 0, 0)
+        };
+        titleLabel.MouseDown += TitleBar_MouseDown;
+        titleLabel.MouseMove += TitleBar_MouseMove;
+        titleLabel.MouseUp += TitleBar_MouseUp;
+
+        var maxBtn = new Button
+        {
+            Text = "□",
+            Font = new Font("Segoe UI", 12, FontStyle.Bold),
+            Size = new Size(40, 40),
+            Dock = DockStyle.Right,
+            BackColor = Color.FromArgb(30, 41, 59),
+            ForeColor = Color.FromArgb(148, 163, 184),
+            FlatStyle = FlatStyle.Flat,
+            Cursor = Cursors.Hand
+        };
+        maxBtn.FlatAppearance.BorderSize = 0;
+        maxBtn.MouseEnter += (s, e) => maxBtn.BackColor = Color.FromArgb(45, 60, 80);
+        maxBtn.MouseLeave += (s, e) => maxBtn.BackColor = Color.FromArgb(30, 41, 59);
+        maxBtn.Click += (s, e) => this.WindowState = this.WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized;
+
+        var closeBtn = new Button
+        {
+            Text = "✕",
+            Font = new Font("Segoe UI", 14, FontStyle.Bold),
+            Size = new Size(40, 40),
+            Dock = DockStyle.Right,
+            BackColor = Color.FromArgb(30, 41, 59),
+            ForeColor = Color.FromArgb(239, 68, 68),
+            FlatStyle = FlatStyle.Flat,
+            Cursor = Cursors.Hand
+        };
+        closeBtn.FlatAppearance.BorderSize = 0;
+        closeBtn.MouseEnter += (s, e) => { closeBtn.BackColor = Color.FromArgb(239, 68, 68); closeBtn.ForeColor = Color.White; };
+        closeBtn.MouseLeave += (s, e) => { closeBtn.BackColor = Color.FromArgb(30, 41, 59); closeBtn.ForeColor = Color.FromArgb(239, 68, 68); };
+        closeBtn.Click += (s, e) => CloseWithAnimation();
+
+        var minBtn = new Button
+        {
+            Text = "−",
+            Font = new Font("Segoe UI", 16, FontStyle.Bold),
+            Size = new Size(40, 40),
+            Dock = DockStyle.Right,
+            BackColor = Color.FromArgb(30, 41, 59),
+            ForeColor = Color.FromArgb(148, 163, 184),
+            FlatStyle = FlatStyle.Flat,
+            Cursor = Cursors.Hand
+        };
+        minBtn.FlatAppearance.BorderSize = 0;
+        minBtn.MouseEnter += (s, e) => minBtn.BackColor = Color.FromArgb(45, 60, 80);
+        minBtn.MouseLeave += (s, e) => minBtn.BackColor = Color.FromArgb(30, 41, 59);
+        minBtn.Click += (s, e) => MinimizeWithAnimation();
+
+        titleBar.Controls.Add(titleLabel);
+        titleBar.Controls.Add(closeBtn);
+        titleBar.Controls.Add(maxBtn);
+        titleBar.Controls.Add(minBtn);
+        titleBar.MouseDown += TitleBar_MouseDown;
+
+        var headerPanel = CreateHeaderPanel();
+        var sidebarPanel = CreateSidebarPanel();
+        var contentPanel = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(20, 30, 48), Name = "ContentPanel" };
+
+        mainPanel.Controls.Add(contentPanel);
+        mainPanel.Controls.Add(sidebarPanel);
+        mainPanel.Controls.Add(headerPanel);
+        mainPanel.Controls.Add(titleBar);
+
+        this.Controls.Add(mainPanel);
+
+        _currentPanel = contentPanel;
+        ShowDashboard();
+    }
+
+    private Panel CreateHeaderPanel()
+    {
+        var panel = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 70,
+            BackColor = Color.FromArgb(30, 41, 59),
+            BorderStyle = BorderStyle.FixedSingle
+        };
+
+        var titleLabel = new Label
+        {
+            Text = "📦 Warehouse Management",
+            Font = new Font("Segoe UI", 18, FontStyle.Bold),
+            ForeColor = Color.FromArgb(59, 130, 246),
+            AutoSize = true,
+            Location = new Point(20, 15)
+        };
+
+        var userLabel = new Label
+        {
+            Text = $"👤 {CurrentSession.CurrentUser?.FullName}",
+            Font = new Font("Segoe UI", 11),
+            ForeColor = Color.FromArgb(148, 163, 184),
+            AutoSize = true,
+            Location = new Point(1100, 20)
+        };
+
+        var logoutButton = new Button
+        {
+            Text = "Выход",
+            Location = new Point(1250, 15),
+            Size = new Size(100, 40),
+            Font = new Font("Segoe UI", 10, FontStyle.Bold),
+            BackColor = Color.FromArgb(239, 68, 68),
+            ForeColor = Color.White,
+            FlatStyle = FlatStyle.Flat,
+            Cursor = Cursors.Hand
+        };
+        logoutButton.FlatAppearance.BorderSize = 0;
+        logoutButton.Click += (s, e) => Logout();
+
+        panel.Controls.Add(titleLabel);
+        panel.Controls.Add(userLabel);
+        panel.Controls.Add(logoutButton);
+
+        return panel;
+    }
+
+    private Panel CreateSidebarPanel()
+    {
+        var panel = new Panel
+        {
+            Dock = DockStyle.Left,
+            Width = 250,
+            BackColor = Color.FromArgb(25, 35, 50),
+            BorderStyle = BorderStyle.FixedSingle
+        };
+
+        var buttons = new[]
+        {
+            ("📊 Панель управления", "Dashboard"),
+            ("📦 Товары", "Products"),
+            ("📂 Категории", "Categories"),
+            ("🚚 Поставщики", "Suppliers"),
+            ("📥 Приход", "Income"),
+            ("📤 Расход", "Outcome"),
+            ("📋 Логи действий", "Logs")
+        };
+
+        int y = 20;
+        foreach (var (text, tag) in buttons)
+        {
+            var btn = new Button
+            {
+                Text = text,
+                Location = new Point(10, y),
+                Size = new Size(230, 50),
+                Font = new Font("Segoe UI", 11),
+                BackColor = Color.FromArgb(30, 41, 59),
+                ForeColor = Color.FromArgb(148, 163, 184),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                Tag = tag
+            };
+            btn.FlatAppearance.BorderSize = 0;
+            btn.Click += (s, e) => NavigateTo(tag);
+            btn.MouseEnter += (s, e) => btn.BackColor = Color.FromArgb(59, 130, 246);
+            btn.MouseLeave += (s, e) => btn.BackColor = Color.FromArgb(30, 41, 59);
+
+            panel.Controls.Add(btn);
+            y += 60;
+        }
+
+        return panel;
+    }
+
+    private void NavigateTo(string page)
+    {
+        _currentPanel?.Controls.Clear();
+
+        switch (page)
+        {
+            case "Dashboard": ShowDashboard(); break;
+            case "Products": ShowProducts(); break;
+            case "Categories": ShowCategories(); break;
+            case "Suppliers": ShowSuppliers(); break;
+            case "Income": ShowIncome(); break;
+            case "Outcome": ShowOutcome(); break;
+            case "Logs": ShowLogs(); break;
+        }
+
+        _logRepo.LogAction(CurrentSession.CurrentUser?.Id ?? 0, CurrentSession.CurrentUser?.FullName ?? "Unknown", $"Navigated to {page}", "");
+    }
+
+    private void ShowDashboard()
+    {
+        var products = _productRepo.GetAll();
+        var lowStockProducts = products.Where(p => p.Quantity <= p.MinQuantity).ToList();
+
+        var panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+
+        var titleLabel = new Label
+        {
+            Text = "📊 Панель управления",
+            Font = new Font("Segoe UI", 24, FontStyle.Bold),
+            ForeColor = Color.FromArgb(59, 130, 246),
+            AutoSize = true,
+            Location = new Point(20, 20)
+        };
+
+        var statsPanel = new Panel { Location = new Point(20, 80), Size = new Size(1300, 150), BackColor = Color.FromArgb(30, 41, 59) };
+
+        var stats = new[]
+        {
+            ($"Всего товаров", products.Count.ToString(), "📦"),
+            ($"Низкий запас", lowStockProducts.Count.ToString(), "⚠️"),
+            ($"Общая стоимость", $"${products.Sum(p => p.Price * p.Quantity):F2}", "💰"),
+            ($"Активные категории", _categoryRepo.GetAll().Count.ToString(), "📂")
+        };
+
+        int x = 20;
+        foreach (var (title, value, icon) in stats)
+        {
+            var statBox = new Panel
+            {
+                Location = new Point(x, 20),
+                Size = new Size(280, 110),
+                BackColor = Color.FromArgb(45, 60, 80),
+                BorderStyle = BorderStyle.FixedSingle
+            };
+
+            var iconLabel = new Label { Text = icon, Font = new Font("Segoe UI", 32), AutoSize = true, Location = new Point(20, 15) };
+            var titleLbl = new Label { Text = title, Font = new Font("Segoe UI", 10), ForeColor = Color.FromArgb(148, 163, 184), AutoSize = true, Location = new Point(100, 20) };
+            var valueLbl = new Label { Text = value, Font = new Font("Segoe UI", 20, FontStyle.Bold), ForeColor = Color.FromArgb(59, 130, 246), AutoSize = true, Location = new Point(100, 50) };
+
+            statBox.Controls.Add(iconLabel);
+            statBox.Controls.Add(titleLbl);
+            statBox.Controls.Add(valueLbl);
+            statsPanel.Controls.Add(statBox);
+
+            x += 300;
+        }
+
+        var lowStockLabel = new Label
+        {
+            Text = "⚠️ Товары с низким запасом",
+            Font = new Font("Segoe UI", 14, FontStyle.Bold),
+            ForeColor = Color.FromArgb(239, 68, 68),
+            AutoSize = true,
+            Location = new Point(20, 260)
+        };
+
+        var dgv = new DataGridView
+        {
+            Location = new Point(20, 300),
+            Size = new Size(1300, 300),
+            BackgroundColor = Color.FromArgb(30, 41, 59),
+            ForeColor = Color.White,
+            BorderStyle = BorderStyle.None,
+            AllowUserToAddRows = false,
+            ReadOnly = true
+        };
+        dgv.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(45, 60, 80);
+        dgv.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+        dgv.DefaultCellStyle.BackColor = Color.FromArgb(30, 41, 59);
+        dgv.DefaultCellStyle.ForeColor = Color.White;
+
+        dgv.DataSource = lowStockProducts.Select(p => new { p.Article, p.Name, p.CategoryName, p.Quantity, p.MinQuantity, p.Price }).ToList();
+
+        panel.Controls.Add(titleLabel);
+        panel.Controls.Add(statsPanel);
+        panel.Controls.Add(lowStockLabel);
+        panel.Controls.Add(dgv);
+
+        _currentPanel?.Controls.Add(panel);
+    }
+
+    private void ShowProducts()
+    {
+        var panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        var titleLabel = new Label { Text = "📦 Управление товарами", Font = new Font("Segoe UI", 20, FontStyle.Bold), ForeColor = Color.FromArgb(59, 130, 246), AutoSize = true, Location = new Point(20, 20) };
+        var dgv = new DataGridView { Location = new Point(20, 80), Size = new Size(1300, 700), BackgroundColor = Color.FromArgb(30, 41, 59), ForeColor = Color.White, BorderStyle = BorderStyle.None, AllowUserToAddRows = false, ReadOnly = true };
+        dgv.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(45, 60, 80);
+        dgv.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+        dgv.DefaultCellStyle.BackColor = Color.FromArgb(30, 41, 59);
+        dgv.DefaultCellStyle.ForeColor = Color.White;
+        dgv.DataSource = _productRepo.GetAll().Select(p => new { p.Id, p.Article, p.Name, p.CategoryName, p.Unit, p.Price, p.Quantity, p.MinQuantity, p.SupplierName }).ToList();
+        panel.Controls.Add(titleLabel);
+        panel.Controls.Add(dgv);
+        _currentPanel?.Controls.Add(panel);
+    }
+
+    private void ShowCategories()
+    {
+        var panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        var titleLabel = new Label { Text = "📂 Управление категориями", Font = new Font("Segoe UI", 20, FontStyle.Bold), ForeColor = Color.FromArgb(59, 130, 246), AutoSize = true, Location = new Point(20, 20) };
+        var dgv = new DataGridView { Location = new Point(20, 80), Size = new Size(1300, 700), BackgroundColor = Color.FromArgb(30, 41, 59), ForeColor = Color.White, BorderStyle = BorderStyle.None, AllowUserToAddRows = false, ReadOnly = true };
+        dgv.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(45, 60, 80);
+        dgv.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+        dgv.DefaultCellStyle.BackColor = Color.FromArgb(30, 41, 59);
+        dgv.DefaultCellStyle.ForeColor = Color.White;
+        dgv.DataSource = _categoryRepo.GetAll().Select(c => new { c.Id, c.Name, c.Description }).ToList();
+        panel.Controls.Add(titleLabel);
+        panel.Controls.Add(dgv);
+        _currentPanel?.Controls.Add(panel);
+    }
+
+    private void ShowSuppliers()
+    {
+        var panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        var titleLabel = new Label { Text = "🚚 Управление поставщиками", Font = new Font("Segoe UI", 20, FontStyle.Bold), ForeColor = Color.FromArgb(59, 130, 246), AutoSize = true, Location = new Point(20, 20) };
+        var dgv = new DataGridView { Location = new Point(20, 80), Size = new Size(1300, 700), BackgroundColor = Color.FromArgb(30, 41, 59), ForeColor = Color.White, BorderStyle = BorderStyle.None, AllowUserToAddRows = false, ReadOnly = true };
+        dgv.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(45, 60, 80);
+        dgv.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+        dgv.DefaultCellStyle.BackColor = Color.FromArgb(30, 41, 59);
+        dgv.DefaultCellStyle.ForeColor = Color.White;
+        dgv.DataSource = _supplierRepo.GetAll().Select(s => new { s.Id, s.Name, s.ContactPerson, s.Phone, s.Email }).ToList();
+        panel.Controls.Add(titleLabel);
+        panel.Controls.Add(dgv);
+        _currentPanel?.Controls.Add(panel);
+    }
+
+    private void ShowIncome()
+    {
+        var panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        var titleLabel = new Label { Text = "📥 Приход товаров", Font = new Font("Segoe UI", 20, FontStyle.Bold), ForeColor = Color.FromArgb(59, 130, 246), AutoSize = true, Location = new Point(20, 20) };
+        var dgv = new DataGridView { Location = new Point(20, 80), Size = new Size(1300, 700), BackgroundColor = Color.FromArgb(30, 41, 59), ForeColor = Color.White, BorderStyle = BorderStyle.None, AllowUserToAddRows = false, ReadOnly = true };
+        dgv.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(45, 60, 80);
+        dgv.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+        dgv.DefaultCellStyle.BackColor = Color.FromArgb(30, 41, 59);
+        dgv.DefaultCellStyle.ForeColor = Color.White;
+        dgv.DataSource = _incomeRepo.GetAll().Select(t => new { t.Id, t.ProductName, t.Quantity, t.Price, t.SupplierName, t.TransactionDate }).ToList();
+        panel.Controls.Add(titleLabel);
+        panel.Controls.Add(dgv);
+        _currentPanel?.Controls.Add(panel);
+    }
+
+    private void ShowOutcome()
+    {
+        var panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        var titleLabel = new Label { Text = "📤 Расход товаров", Font = new Font("Segoe UI", 20, FontStyle.Bold), ForeColor = Color.FromArgb(59, 130, 246), AutoSize = true, Location = new Point(20, 20) };
+        var dgv = new DataGridView { Location = new Point(20, 80), Size = new Size(1300, 700), BackgroundColor = Color.FromArgb(30, 41, 59), ForeColor = Color.White, BorderStyle = BorderStyle.None, AllowUserToAddRows = false, ReadOnly = true };
+        dgv.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(45, 60, 80);
+        dgv.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+        dgv.DefaultCellStyle.BackColor = Color.FromArgb(30, 41, 59);
+        dgv.DefaultCellStyle.ForeColor = Color.White;
+        dgv.DataSource = _outcomeRepo.GetAll().Select(t => new { t.Id, t.ProductName, t.Quantity, t.Price, t.Reason, t.TransactionDate }).ToList();
+        panel.Controls.Add(titleLabel);
+        panel.Controls.Add(dgv);
+        _currentPanel?.Controls.Add(panel);
+    }
+
+    private void ShowLogs()
+    {
+        var panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        var titleLabel = new Label { Text = "📋 Логи действий пользователей", Font = new Font("Segoe UI", 20, FontStyle.Bold), ForeColor = Color.FromArgb(59, 130, 246), AutoSize = true, Location = new Point(20, 20) };
+        var dgv = new DataGridView { Location = new Point(20, 80), Size = new Size(1300, 700), BackgroundColor = Color.FromArgb(30, 41, 59), ForeColor = Color.White, BorderStyle = BorderStyle.None, AllowUserToAddRows = false, ReadOnly = true };
+        dgv.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(45, 60, 80);
+        dgv.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+        dgv.DefaultCellStyle.BackColor = Color.FromArgb(30, 41, 59);
+        dgv.DefaultCellStyle.ForeColor = Color.White;
+        dgv.DataSource = _logRepo.GetAll().Select(l => new { l.Id, l.UserName, l.Action, l.Details, l.ActionDate }).ToList();
+        panel.Controls.Add(titleLabel);
+        panel.Controls.Add(dgv);
+        _currentPanel?.Controls.Add(panel);
+    }
+
+    private void StartFadeInAnimation()
+    {
+        _fadeInTimer = new System.Windows.Forms.Timer();
+        _fadeInTimer.Interval = 20;
+        _fadeInTimer.Tick += (s, e) =>
+        {
+            _opacity += 0.05f;
+            if (_opacity >= 1)
+            {
+                _opacity = 1;
+                _fadeInTimer?.Stop();
+            }
+            this.Opacity = _opacity;
+        };
+        _fadeInTimer.Start();
+    }
+
+    private void Logout()
+    {
+        CurrentSession.Logout();
+        this.Close();
+    }
+
+    private void TitleBar_MouseDown(object? sender, MouseEventArgs e)
+    {
+        if (e.Button == MouseButtons.Left)
+        {
+            _isDragging = true;
+            _dragStartPoint = new Point(e.X, e.Y);
+        }
+    }
+
+    private void TitleBar_MouseMove(object? sender, MouseEventArgs e)
+    {
+        if (_isDragging)
+        {
+            Point p = PointToScreen(e.Location);
+            this.Location = new Point(p.X - _dragStartPoint.X, p.Y - _dragStartPoint.Y);
+        }
+    }
+
+    private void TitleBar_MouseUp(object? sender, MouseEventArgs e)
+    {
+        _isDragging = false;
+    }
+
+    private void CloseWithAnimation()
+    {
+        var closeTimer = new System.Windows.Forms.Timer();
+        closeTimer.Interval = 20;
+        closeTimer.Tick += (s, e) =>
+        {
+            this.Opacity -= 0.1;
+            if (this.Opacity <= 0)
+            {
+                closeTimer.Stop();
+                this.Close();
+            }
+        };
+        closeTimer.Start();
+    }
+
+    private void MinimizeWithAnimation()
+    {
+        var minTimer = new System.Windows.Forms.Timer();
+        minTimer.Interval = 20;
+        minTimer.Tick += (s, e) =>
+        {
+            this.Opacity -= 0.15;
+            if (this.Opacity <= 0)
+            {
+                minTimer.Stop();
+                this.WindowState = FormWindowState.Minimized;
+                this.Opacity = 1;
+            }
+        };
+        minTimer.Start();
+    }
+}
